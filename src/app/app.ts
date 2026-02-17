@@ -4,11 +4,13 @@ import { FormsModule } from '@angular/forms';
 import { ApiService, Session, LogEntry } from './api.service';
 import { FeedbackFormComponent } from './feedback-form.component';
 import { FeedbackIndicatorComponent } from './feedback-indicator.component';
+import { FeedbackViewerComponent } from './feedback-viewer.component';
+import { FeedbackAnalyticsComponent } from './feedback-analytics.component';
 import { SessionFeedback, CreateSessionFeedback } from './feedback-types';
 
 @Component({
   selector: 'app-root',
-  imports: [CommonModule, FormsModule, FeedbackFormComponent, FeedbackIndicatorComponent],
+  imports: [CommonModule, FormsModule, FeedbackFormComponent, FeedbackIndicatorComponent, FeedbackViewerComponent, FeedbackAnalyticsComponent],
   templateUrl: './app.html',
   styleUrl: './app.css'
 })
@@ -23,13 +25,21 @@ export class App implements OnInit {
   
   // Feedback state
   showFeedbackForm = signal(false);
+  showFeedbackViewer = signal(false);
+  showAnalytics = signal(false);
   sessionFeedbacks = signal<Map<string, SessionFeedback>>(new Map());
+  viewingFeedback = signal<SessionFeedback | null>(null);
   
   // Computed feedback for selected session
   selectedSessionFeedback = computed(() => {
     const session = this.selectedSession();
     if (!session) return null;
     return this.sessionFeedbacks().get(session.sessionId) || null;
+  });
+
+  // Get all feedbacks as array for analytics
+  allFeedbacksArray = computed(() => {
+    return Array.from(this.sessionFeedbacks().values());
   });
 
   ngOnInit() {
@@ -174,5 +184,75 @@ export class App implements OnInit {
         alert('Failed to submit feedback. Please try again.');
       }
     });
+  }
+
+  // Feedback viewer
+  openFeedbackViewer(): void {
+    const feedback = this.selectedSessionFeedback();
+    if (feedback) {
+      this.viewingFeedback.set(feedback);
+      this.showFeedbackViewer.set(true);
+    }
+  }
+
+  closeFeedbackViewer(): void {
+    this.showFeedbackViewer.set(false);
+    this.viewingFeedback.set(null);
+  }
+
+  updateFeedback(feedbackId: string, updates: Partial<SessionFeedback>): void {
+    this.apiService.updateFeedback(feedbackId, updates).subscribe({
+      next: (updated) => {
+        console.log('Feedback updated successfully:', updated);
+        this.loadAllFeedback();
+        this.closeFeedbackViewer();
+      },
+      error: (error) => {
+        console.error('Error updating feedback:', error);
+        alert('Failed to update feedback. Please try again.');
+      }
+    });
+  }
+
+  deleteFeedback(feedbackId: string): void {
+    this.apiService.deleteFeedback(feedbackId).subscribe({
+      next: (result) => {
+        if (result.success) {
+          console.log('Feedback deleted successfully');
+          this.loadAllFeedback();
+          this.closeFeedbackViewer();
+        }
+      },
+      error: (error) => {
+        console.error('Error deleting feedback:', error);
+        alert('Failed to delete feedback. Please try again.');
+      }
+    });
+  }
+
+  // Analytics
+  openAnalytics(): void {
+    this.showAnalytics.set(true);
+  }
+
+  closeAnalytics(): void {
+    this.showAnalytics.set(false);
+  }
+
+  viewFeedbackFromAnalytics(feedback: SessionFeedback): void {
+    this.viewingFeedback.set(feedback);
+    this.showAnalytics.set(false);
+    this.showFeedbackViewer.set(true);
+  }
+
+  exportFeedbackData(feedbacks: SessionFeedback[]): void {
+    const dataStr = JSON.stringify(feedbacks, null, 2);
+    const dataBlob = new Blob([dataStr], { type: 'application/json' });
+    const url = URL.createObjectURL(dataBlob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `feedback-export-${new Date().toISOString().split('T')[0]}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
   }
 }
