@@ -22,9 +22,9 @@ The feedback data model should capture the following information:
 
 ```typescript
 interface SessionFeedback {
-  id: string;                          // Unique feedback identifier
+  id: string;                          // Unique feedback identifier (generated server-side)
   sessionId: string;                   // Reference to the Copilot session
-  timestamp: string;                   // ISO timestamp when feedback was submitted
+  timestamp: Date;                     // Timestamp when feedback was submitted (Date type, serialized as ISO string for API)
   
   // Overall session evaluation
   overallAccuracy: number;             // Rating 1-5 (1=Very Inaccurate, 5=Very Accurate)
@@ -60,6 +60,11 @@ interface PromptFeedback {
   responseHelpful: boolean;            // Whether the response was helpful
   issues?: string[];                   // List of issues (e.g., "hallucination", "incomplete", "incorrect")
   notes?: string;                      // Additional notes for this prompt
+}
+
+// Separate type for creating new feedback (without server-generated fields)
+interface CreateSessionFeedback extends Omit<SessionFeedback, 'id' | 'timestamp'> {
+  // Client provides all fields except id and timestamp which are server-generated
 }
 ```
 
@@ -161,8 +166,8 @@ The following API endpoints must be implemented:
 1. **Submit Feedback**
    ```
    POST /api/feedback
-   Body: SessionFeedback
-   Response: { success: boolean, feedbackId: string }
+   Body: CreateSessionFeedback (excludes id and timestamp - these are server-generated)
+   Response: { success: boolean, feedbackId: string, timestamp: string }
    ```
 
 2. **Get Feedback for Session**
@@ -211,9 +216,16 @@ The following API endpoints must be implemented:
 
 #### 3.2 Data Storage
 
-- Use a database (e.g., SQLite, PostgreSQL, MongoDB) for persistent storage
+**Database Selection**:
+- **PostgreSQL** (Recommended for production): Best for multi-user systems, strong ACID guarantees, excellent concurrent write support
+- **SQLite** (Suitable for single-user/development): Lightweight, no separate server, but limited concurrent write support
+- **MongoDB** (Alternative): Good for flexible schema evolution, but different transaction guarantees than relational databases
+
+**Storage Requirements**:
 - Implement proper indexing on sessionId, timestamp, and rating fields
-- Ensure data integrity with foreign key constraints (sessionId references sessions)
+- Ensure data integrity:
+  - If sessions are stored in the same database: use foreign key constraints (sessionId references sessions)
+  - If sessions and feedback are in separate data stores: implement application-level validation to verify sessionId exists before accepting feedback
 - Implement backup and recovery mechanisms
 
 ### 4. Integration with Existing System
@@ -225,9 +237,9 @@ Update `api.service.ts` to include feedback-related methods:
 ```typescript
 // Add to ApiService
 getFeedbackForSession(sessionId: string): Observable<SessionFeedback | null>
-submitFeedback(feedback: SessionFeedback): Observable<{ success: boolean, feedbackId: string }>
+submitFeedback(feedback: CreateSessionFeedback): Observable<{ success: boolean, feedbackId: string }>  // Note: uses CreateSessionFeedback to prevent client-provided id
 getAllFeedback(filters?: FeedbackFilters): Observable<SessionFeedback[]>
-updateFeedback(feedbackId: string, updates: Partial<SessionFeedback>): Observable<SessionFeedback>
+updateFeedback(feedbackId: string, updates: Partial<Omit<SessionFeedback, 'id' | 'timestamp'>>): Observable<SessionFeedback>  // Prevent updating id/timestamp
 deleteFeedback(feedbackId: string): Observable<{ success: boolean }>
 exportFeedback(format: 'json' | 'csv', dateRange?: DateRange): Observable<Blob>
 ```
@@ -298,7 +310,10 @@ GET /api/ml/feedback-insights
 #### 6.1 Data Privacy
 
 - Feedback data may contain sensitive information about code and tasks
-- Implement user authentication if multiple users share the system
+- **Authentication is required** to ensure data security and proper attribution
+  - Implement user authentication for all feedback operations
+  - Each feedback entry must be associated with an authenticated user
+  - For single-user deployments, a simple authentication mechanism is still required
 - Allow users to mark feedback as "private" (not for ML training)
 - Provide data export and deletion capabilities (GDPR compliance)
 
@@ -318,10 +333,13 @@ GET /api/ml/feedback-insights
 
 #### 7.1 Performance
 
+**Performance Targets** (measured on localhost or with < 50ms network latency):
 - Feedback form should load in < 200ms
-- Feedback submission should complete in < 1 second
+- Feedback submission should complete in < 1 second (including validation and persistence)
 - Feedback retrieval should be < 500ms for single session
 - Support at least 10,000 feedback entries without performance degradation
+
+**Note**: These targets assume development or local network conditions. For production deployments over the internet, adjust expectations based on network latency and test under realistic conditions.
 
 #### 7.2 Usability
 
