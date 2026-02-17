@@ -58,6 +58,9 @@
               <span class="event-count">{{ session.events.length }} events</span>
               <span class="session-date">{{ formatDate(session.startTime) }}</span>
             </div>
+            <div class="session-feedback">
+              <app-feedback-indicator [feedback]="getFeedbackForSession(session.sessionId)"></app-feedback-indicator>
+            </div>
           </div>
         } @empty {
           @if (!loading()) {
@@ -75,6 +78,13 @@
           <div class="session-info">
             <span class="info-label">Session ID:</span>
             <code class="session-id-full">{{ selectedSession()!.sessionId }}</code>
+            <button class="btn-feedback" (click)="openFeedbackForm()" title="Provide Feedback">
+              @if (selectedSessionFeedback()) {
+                ✏️ Edit Feedback
+              } @else {
+                📝 Provide Feedback
+              }
+            </button>
           </div>
         </div>
 
@@ -169,4 +179,13 @@
       }
     </main>
   </div>
+
+  <!-- Feedback Form Modal -->
+  @if (showFeedbackForm() && selectedSession()) {
+    <app-feedback-form
+      [session]="selectedSession()!"
+      (submit)="submitFeedback($event)"
+      (cancel)="closeFeedbackForm()">
+    </app-feedback-form>
+  }
 </div>

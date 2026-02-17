@@ -1,11 +1,14 @@
-import { Component, OnInit, signal, inject } from '@angular/core';
+import { Component, OnInit, signal, inject, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ApiService, Session, LogEntry } from './api.service';
+import { FeedbackFormComponent } from './feedback-form.component';
+import { FeedbackIndicatorComponent } from './feedback-indicator.component';
+import { SessionFeedback, CreateSessionFeedback } from './feedback-types';
 
 @Component({
   selector: 'app-root',
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, FeedbackFormComponent, FeedbackIndicatorComponent],
   templateUrl: './app.html',
   styleUrl: './app.css'
 })
@@ -17,9 +20,21 @@ export class App implements OnInit {
   loading = signal(true);
   editingApiUrl = signal(false);
   tempApiUrl = signal('');
+  
+  // Feedback state
+  showFeedbackForm = signal(false);
+  sessionFeedbacks = signal<Map<string, SessionFeedback>>(new Map());
+  
+  // Computed feedback for selected session
+  selectedSessionFeedback = computed(() => {
+    const session = this.selectedSession();
+    if (!session) return null;
+    return this.sessionFeedbacks().get(session.sessionId) || null;
+  });
 
   ngOnInit() {
     this.loadSessions();
+    this.loadAllFeedback();
   }
 
   loadSessions() {
@@ -121,5 +136,43 @@ export class App implements OnInit {
   cancelEditApiUrl(): void {
     this.editingApiUrl.set(false);
     this.tempApiUrl.set('');
+  }
+
+  // Feedback management
+  loadAllFeedback(): void {
+    this.apiService.getAllFeedback().subscribe({
+      next: (feedbacks) => {
+        const feedbackMap = new Map<string, SessionFeedback>();
+        feedbacks.forEach(fb => feedbackMap.set(fb.sessionId, fb));
+        this.sessionFeedbacks.set(feedbackMap);
+      },
+      error: (error) => console.error('Error loading feedback:', error)
+    });
+  }
+
+  getFeedbackForSession(sessionId: string): SessionFeedback | null {
+    return this.sessionFeedbacks().get(sessionId) || null;
+  }
+
+  openFeedbackForm(): void {
+    this.showFeedbackForm.set(true);
+  }
+
+  closeFeedbackForm(): void {
+    this.showFeedbackForm.set(false);
+  }
+
+  submitFeedback(feedback: CreateSessionFeedback): void {
+    this.apiService.submitFeedback(feedback).subscribe({
+      next: (response) => {
+        console.log('Feedback submitted successfully:', response);
+        this.loadAllFeedback(); // Reload feedback
+        this.closeFeedbackForm();
+      },
+      error: (error) => {
+        console.error('Error submitting feedback:', error);
+        alert('Failed to submit feedback. Please try again.');
+      }
+    });
   }
 }

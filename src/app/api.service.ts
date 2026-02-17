@@ -1,7 +1,8 @@
 import { Injectable, inject, signal, effect } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { Observable, map } from 'rxjs';
+import { Observable, map, of } from 'rxjs';
 import { CopilotEvent } from './copilot-event-types';
+import { SessionFeedback, CreateSessionFeedback, FeedbackFilters } from './feedback-types';
 
 export interface LogEntry {
     filename: string;
@@ -15,6 +16,7 @@ export interface Session {
 }
 
 const STORAGE_KEY = 'agent-event-viewer-api-url';
+const FEEDBACK_STORAGE_KEY = 'agent-event-viewer-feedback';
 const DEFAULT_API_URL = 'http://localhost:3000';
 
 @Injectable({ providedIn: 'root' })
@@ -81,5 +83,117 @@ export class ApiService {
         return sessions.sort((a, b) =>
             new Date(b.startTime).getTime() - new Date(a.startTime).getTime()
         );
+    }
+
+    // ===== Feedback Methods =====
+
+    private loadFeedbackFromStorage(): SessionFeedback[] {
+        try {
+            const data = localStorage.getItem(FEEDBACK_STORAGE_KEY);
+            if (!data) return [];
+            const parsed = JSON.parse(data);
+            // Convert timestamp strings back to Date objects
+            return parsed.map((fb: any) => ({
+                ...fb,
+                timestamp: new Date(fb.timestamp)
+            }));
+        } catch {
+            return [];
+        }
+    }
+
+    private saveFeedbackToStorage(feedbacks: SessionFeedback[]): void {
+        try {
+            localStorage.setItem(FEEDBACK_STORAGE_KEY, JSON.stringify(feedbacks));
+        } catch (error) {
+            console.error('Failed to save feedback to storage:', error);
+        }
+    }
+
+    getFeedbackForSession(sessionId: string): Observable<SessionFeedback | null> {
+        const feedbacks = this.loadFeedbackFromStorage();
+        const feedback = feedbacks.find(f => f.sessionId === sessionId) || null;
+        return of(feedback);
+    }
+
+    submitFeedback(feedback: CreateSessionFeedback): Observable<{ success: boolean; feedbackId: string; timestamp: string }> {
+        const feedbacks = this.loadFeedbackFromStorage();
+        
+        const newFeedback: SessionFeedback = {
+            ...feedback,
+            id: this.generateId(),
+            timestamp: new Date()
+        };
+        
+        feedbacks.push(newFeedback);
+        this.saveFeedbackToStorage(feedbacks);
+        
+        return of({
+            success: true,
+            feedbackId: newFeedback.id,
+            timestamp: newFeedback.timestamp.toISOString()
+        });
+    }
+
+    getAllFeedback(filters?: FeedbackFilters): Observable<SessionFeedback[]> {
+        let feedbacks = this.loadFeedbackFromStorage();
+        
+        if (filters) {
+            if (filters.minAccuracy !== undefined) {
+                feedbacks = feedbacks.filter(f => f.overallAccuracy >= filters.minAccuracy!);
+            }
+            if (filters.maxAccuracy !== undefined) {
+                feedbacks = feedbacks.filter(f => f.overallAccuracy <= filters.maxAccuracy!);
+            }
+            if (filters.taskCompleted !== undefined) {
+                feedbacks = feedbacks.filter(f => f.taskCompleted === filters.taskCompleted);
+            }
+            if (filters.taskCategory) {
+                feedbacks = feedbacks.filter(f => f.taskCategory === filters.taskCategory);
+            }
+            if (filters.startDate) {
+                const startDate = new Date(filters.startDate);
+                feedbacks = feedbacks.filter(f => f.timestamp >= startDate);
+            }
+            if (filters.endDate) {
+                const endDate = new Date(filters.endDate);
+                feedbacks = feedbacks.filter(f => f.timestamp <= endDate);
+            }
+        }
+        
+        return of(feedbacks);
+    }
+
+    updateFeedback(feedbackId: string, updates: Partial<Omit<SessionFeedback, 'id' | 'timestamp'>>): Observable<SessionFeedback | null> {
+        const feedbacks = this.loadFeedbackFromStorage();
+        const index = feedbacks.findIndex(f => f.id === feedbackId);
+        
+        if (index === -1) {
+            return of(null);
+        }
+        
+        feedbacks[index] = {
+            ...feedbacks[index],
+            ...updates
+        };
+        
+        this.saveFeedbackToStorage(feedbacks);
+        return of(feedbacks[index]);
+    }
+
+    deleteFeedback(feedbackId: string): Observable<{ success: boolean }> {
+        const feedbacks = this.loadFeedbackFromStorage();
+        const filtered = feedbacks.filter(f => f.id !== feedbackId);
+        
+        if (filtered.length === feedbacks.length) {
+            return of({ success: false });
+        }
+        
+        this.saveFeedbackToStorage(filtered);
+        return of({ success: true });
+    }
+
+    private generateId(): string {
+        return `fb-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     }
 }
