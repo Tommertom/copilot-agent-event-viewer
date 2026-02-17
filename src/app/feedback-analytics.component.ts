@@ -629,8 +629,8 @@ export class FeedbackAnalyticsComponent {
   }
 
   applyFilters() {
-    // Force re-render - in a real app this would be better handled
-    this.allFeedback = [...this.allFeedback];
+    // Filters are reactive - changing them triggers recomputation of filteredFeedback
+    // This method is kept for explicit filter application if needed
   }
 
   clearFilters() {

@@ -194,6 +194,6 @@ export class ApiService {
     }
 
     private generateId(): string {
-        return `fb-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        return `fb-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
     }
 }

@@ -587,7 +587,7 @@ export class FeedbackViewerComponent implements OnInit {
   @Output() delete = new EventEmitter<void>();
 
   editing = false;
-  editData: any = {};
+  editData: Partial<Omit<SessionFeedback, 'id' | 'timestamp'>> = {};
 
   ngOnInit() {
     this.resetEditData();
