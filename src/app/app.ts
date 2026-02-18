@@ -1,11 +1,16 @@
-import { Component, OnInit, signal, inject } from '@angular/core';
+import { Component, OnInit, signal, inject, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ApiService, Session, LogEntry } from './api.service';
+import { FeedbackFormComponent } from './feedback-form.component';
+import { FeedbackIndicatorComponent } from './feedback-indicator.component';
+import { FeedbackViewerComponent } from './feedback-viewer.component';
+import { FeedbackAnalyticsComponent } from './feedback-analytics.component';
+import { SessionFeedback, CreateSessionFeedback } from './feedback-types';
 
 @Component({
   selector: 'app-root',
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, FeedbackFormComponent, FeedbackIndicatorComponent, FeedbackViewerComponent, FeedbackAnalyticsComponent],
   template: `<div class="app-container">
   <header class="app-header">
     <h1>🤖 Agent Event Viewer</h1>
@@ -33,6 +38,9 @@ import { ApiService, Session, LogEntry } from './api.service';
           </div>
         }
       </div>
+      <button class="btn-analytics" (click)="openAnalytics()" title="View Feedback Analytics">
+        📊 Analytics
+      </button>
       <div class="header-stats">
         <span class="stat">{{ sessions().length }} Sessions</span>
         @if (selectedSession()) {
@@ -66,6 +74,9 @@ import { ApiService, Session, LogEntry } from './api.service';
               <span class="event-count">{{ session.events.length }} events</span>
               <span class="session-date">{{ formatDate(session.startTime) }}</span>
             </div>
+            <div class="session-feedback">
+              <app-feedback-indicator [feedback]="getFeedbackForSession(session.sessionId)"></app-feedback-indicator>
+            </div>
           </div>
         } @empty {
           @if (!loading()) {
@@ -83,6 +94,18 @@ import { ApiService, Session, LogEntry } from './api.service';
           <div class="session-info">
             <span class="info-label">Session ID:</span>
             <code class="session-id-full">{{ selectedSession()!.sessionId }}</code>
+            @if (selectedSessionFeedback()) {
+              <button class="btn-feedback" (click)="openFeedbackViewer()" title="View Feedback">
+                👁️ View Feedback
+              </button>
+            }
+            <button class="btn-feedback" (click)="openFeedbackForm()" title="Provide Feedback">
+              @if (selectedSessionFeedback()) {
+                ✏️ Edit Feedback
+              } @else {
+                📝 Provide Feedback
+              }
+            </button>
           </div>
         </div>
 
@@ -177,6 +200,35 @@ import { ApiService, Session, LogEntry } from './api.service';
       }
     </main>
   </div>
+
+  <!-- Feedback Form Modal -->
+  @if (showFeedbackForm() && selectedSession()) {
+    <app-feedback-form
+      [session]="selectedSession()!"
+      (submit)="submitFeedback($event)"
+      (cancel)="closeFeedbackForm()">
+    </app-feedback-form>
+  }
+
+  <!-- Feedback Viewer Modal -->
+  @if (showFeedbackViewer() && viewingFeedback()) {
+    <app-feedback-viewer
+      [feedback]="viewingFeedback()!"
+      (close)="closeFeedbackViewer()"
+      (update)="updateFeedback(viewingFeedback()!.id, $event)"
+      (delete)="deleteFeedback(viewingFeedback()!.id)">
+    </app-feedback-viewer>
+  }
+
+  <!-- Analytics Panel -->
+  @if (showAnalytics()) {
+    <app-feedback-analytics
+      [allFeedback]="allFeedbacksArray()"
+      (close)="closeAnalytics()"
+      (selectFeedback)="viewFeedbackFromAnalytics($event)"
+      (exportData)="exportFeedbackData($event)">
+    </app-feedback-analytics>
+  }
 </div>`,
   styles: `.app-container {
   height: 100vh;
@@ -692,7 +744,59 @@ import { ApiService, Session, LogEntry } from './api.service';
 
 ::-webkit-scrollbar-thumb:hover {
   background: #475569;
-}`
+}
+
+/* Feedback UI Styles */
+.session-feedback {
+  margin-top: 0.5rem;
+}
+
+.btn-feedback {
+  background: rgba(99, 102, 241, 0.2);
+  border: 1px solid rgba(99, 102, 241, 0.4);
+  border-radius: 0.375rem;
+  padding: 0.5rem 1rem;
+  color: #c7d2fe;
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-left: 1rem;
+  font-weight: 500;
+}
+
+.btn-feedback:hover {
+  background: rgba(99, 102, 241, 0.3);
+  border-color: rgba(99, 102, 241, 0.6);
+  transform: translateY(-1px);
+}
+
+.btn-feedback:active {
+  transform: translateY(0);
+}
+
+.btn-analytics {
+  background: rgba(139, 92, 246, 0.2);
+  border: 1px solid rgba(139, 92, 246, 0.4);
+  border-radius: 0.375rem;
+  padding: 0.5rem 1rem;
+  color: #c4b5fd;
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-weight: 500;
+}
+
+.btn-analytics:hover {
+  background: rgba(139, 92, 246, 0.3);
+  border-color: rgba(139, 92, 246, 0.6);
+  transform: translateY(-1px);
+}
+
+.btn-analytics:active {
+  transform: translateY(0);
+}
+
+`
 })
 export class App implements OnInit {
   private apiService = inject(ApiService);
@@ -702,9 +806,29 @@ export class App implements OnInit {
   loading = signal(true);
   editingApiUrl = signal(false);
   tempApiUrl = signal('');
+  
+  // Feedback state
+  showFeedbackForm = signal(false);
+  showFeedbackViewer = signal(false);
+  showAnalytics = signal(false);
+  sessionFeedbacks = signal<Map<string, SessionFeedback>>(new Map());
+  viewingFeedback = signal<SessionFeedback | null>(null);
+  
+  // Computed feedback for selected session
+  selectedSessionFeedback = computed(() => {
+    const session = this.selectedSession();
+    if (!session) return null;
+    return this.sessionFeedbacks().get(session.sessionId) || null;
+  });
+
+  // Get all feedbacks as array for analytics
+  allFeedbacksArray = computed(() => {
+    return Array.from(this.sessionFeedbacks().values());
+  });
 
   ngOnInit() {
     this.loadSessions();
+    this.loadAllFeedback();
   }
 
   loadSessions() {
@@ -806,5 +930,113 @@ export class App implements OnInit {
   cancelEditApiUrl(): void {
     this.editingApiUrl.set(false);
     this.tempApiUrl.set('');
+  }
+
+  // Feedback management
+  loadAllFeedback(): void {
+    this.apiService.getAllFeedback().subscribe({
+      next: (feedbacks) => {
+        const feedbackMap = new Map<string, SessionFeedback>();
+        feedbacks.forEach(fb => feedbackMap.set(fb.sessionId, fb));
+        this.sessionFeedbacks.set(feedbackMap);
+      },
+      error: (error) => console.error('Error loading feedback:', error)
+    });
+  }
+
+  getFeedbackForSession(sessionId: string): SessionFeedback | null {
+    return this.sessionFeedbacks().get(sessionId) || null;
+  }
+
+  openFeedbackForm(): void {
+    this.showFeedbackForm.set(true);
+  }
+
+  closeFeedbackForm(): void {
+    this.showFeedbackForm.set(false);
+  }
+
+  submitFeedback(feedback: CreateSessionFeedback): void {
+    this.apiService.submitFeedback(feedback).subscribe({
+      next: (response) => {
+        console.log('Feedback submitted successfully:', response);
+        this.loadAllFeedback(); // Reload feedback
+        this.closeFeedbackForm();
+      },
+      error: (error) => {
+        console.error('Error submitting feedback:', error);
+        alert('Failed to submit feedback. Please try again.');
+      }
+    });
+  }
+
+  // Feedback viewer
+  openFeedbackViewer(): void {
+    const feedback = this.selectedSessionFeedback();
+    if (feedback) {
+      this.viewingFeedback.set(feedback);
+      this.showFeedbackViewer.set(true);
+    }
+  }
+
+  closeFeedbackViewer(): void {
+    this.showFeedbackViewer.set(false);
+    this.viewingFeedback.set(null);
+  }
+
+  updateFeedback(feedbackId: string, updates: Partial<SessionFeedback>): void {
+    this.apiService.updateFeedback(feedbackId, updates).subscribe({
+      next: (updated) => {
+        console.log('Feedback updated successfully:', updated);
+        this.loadAllFeedback();
+        this.closeFeedbackViewer();
+      },
+      error: (error) => {
+        console.error('Error updating feedback:', error);
+        alert('Failed to update feedback. Please try again.');
+      }
+    });
+  }
+
+  deleteFeedback(feedbackId: string): void {
+    this.apiService.deleteFeedback(feedbackId).subscribe({
+      next: (result) => {
+        if (result.success) {
+          console.log('Feedback deleted successfully');
+          this.loadAllFeedback();
+          this.closeFeedbackViewer();
+        }
+      },
+      error: (error) => {
+        console.error('Error deleting feedback:', error);
+        alert('Failed to delete feedback. Please try again.');
+      }
+    });
+  }
+
+  // Analytics
+  openAnalytics(): void {
+    this.showAnalytics.set(true);
+  }
+
+  closeAnalytics(): void {
+    this.showAnalytics.set(false);
+  }
+
+  viewFeedbackFromAnalytics(feedback: SessionFeedback): void {
+    this.viewingFeedback.set(feedback);
+    this.showAnalytics.set(false);
+    this.showFeedbackViewer.set(true);
+  }
+
+  exportFeedbackData(feedbacks: SessionFeedback[]): void {
+    const dataStr = JSON.stringify(feedbacks, null, 2);
+    const dataBlob = new Blob([dataStr], { type: 'application/json' });
+    const url = URL.createObjectURL(dataBlob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `feedback-export-${new Date().toISOString().split('T')[0]}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
   }
 }
